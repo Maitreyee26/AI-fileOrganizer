@@ -1,17 +1,21 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Header } from './components/Header';
 import { CategoryGrid } from './components/CategoryGrid';
 import { DocumentList } from './components/DocumentList';
 import { UploadZone } from './components/UploadZone';
 import { AIAssistant } from './components/AIAssistant';
 import { StatsOverview } from './components/StatsOverview';
+import { LoginPage } from './components/LoginPage';
+import { LoadingSpinner } from './components/LoadingSpinner';
 import { useDocuments } from './hooks/useDocuments';
+import { useAuth } from './hooks/useAuth';
 import { DocumentCategory } from './types';
 import { ArrowLeft, BarChart3 } from 'lucide-react';
 
 type ViewMode = 'overview' | 'category' | 'upload' | 'stats';
 
 function App() {
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<DocumentCategory | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('overview');
@@ -19,12 +23,23 @@ function App() {
   const {
     documents,
     isProcessing,
+    error: documentsError,
     uploadDocuments,
     searchDocuments,
     updateDocumentCategory,
     addTagToDocument,
     deleteDocument
   } = useDocuments();
+
+  // Show loading spinner while checking authentication
+  if (authLoading) {
+    return <LoadingSpinner message="Checking authentication..." />;
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
   const filteredDocuments = useMemo(() => {
     if (selectedCategory) {
@@ -170,10 +185,21 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {documentsError && (
+        <div className="bg-red-50 border-l-4 border-red-400 p-4">
+          <div className="flex">
+            <div className="ml-3">
+              <p className="text-sm text-red-700">{documentsError}</p>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <Header
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         documentCount={documents.length}
+        user={user}
       />
       
       <main className="max-w-7xl mx-auto">

@@ -1,87 +1,90 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Document, DocumentCategory, SearchFilters } from '../types';
 import { documentCategories } from '../data/categories';
-
-// Simulated AI categorization
-const categorizeDocument = (file: File): DocumentCategory => {
-  const fileName = file.name.toLowerCase();
-  const fileType = file.type.toLowerCase();
-  
-  // Simple keyword-based categorization (in real app, this would be AI-powered)
-  if (fileName.includes('diploma') || fileName.includes('degree') || fileName.includes('certificate')) {
-    return documentCategories.find(c => c.id === 'education')!;
-  }
-  if (fileName.includes('payslip') || fileName.includes('salary') || fileName.includes('w2') || fileName.includes('tax')) {
-    return documentCategories.find(c => c.id === 'employment')!;
-  }
-  if (fileName.includes('bank') || fileName.includes('statement') || fileName.includes('loan')) {
-    return documentCategories.find(c => c.id === 'finance')!;
-  }
-  if (fileName.includes('medical') || fileName.includes('prescription') || fileName.includes('health')) {
-    return documentCategories.find(c => c.id === 'medical')!;
-  }
-  if (fileName.includes('bill') || fileName.includes('utility') || fileName.includes('electric')) {
-    return documentCategories.find(c => c.id === 'utilities')!;
-  }
-  if (fileName.includes('lease') || fileName.includes('rent') || fileName.includes('property')) {
-    return documentCategories.find(c => c.id === 'property')!;
-  }
-  if (fileName.includes('passport') || fileName.includes('license') || fileName.includes('id')) {
-    return documentCategories.find(c => c.id === 'legal')!;
-  }
-  if (fileName.includes('car') || fileName.includes('vehicle') || fileName.includes('registration')) {
-    return documentCategories.find(c => c.id === 'vehicles')!;
-  }
-  if (fileName.includes('insurance')) {
-    return documentCategories.find(c => c.id === 'insurance')!;
-  }
-  if (fileName.includes('invoice') || fileName.includes('receipt') || fileName.includes('purchase')) {
-    return documentCategories.find(c => c.id === 'purchases')!;
-  }
-  
-  return documentCategories.find(c => c.id === 'miscellaneous')!;
-};
+import { documentService } from '../services/documentService';
+import { useAuth } from './useAuth';
 
 export const useDocuments = () => {
+  const { isAuthenticated } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const uploadDocuments = useCallback(async (files: FileList) => {
-    setIsProcessing(true);
-    
-    const newDocuments: Document[] = [];
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const category = categorizeDocument(file);
+  // Load documents on mount if authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadDocuments();
+    }
+  }, [isAuthenticated]);
+
+  const loadDocuments = useCallback(async () => {
+    try {
+      setError(null);
+      const response = await documentService.getDocuments();
       
-      // Simulate AI processing delay
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      const document: Document = {
-        id: `doc_${Date.now()}_${i}`,
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        category,
-        uploadDate: new Date(),
-        lastModified: new Date(file.lastModified),
-        tags: [],
+      // Convert API response to frontend format
+      const convertedDocuments = response.documents.map(doc => ({
+        id: doc.id,
+        name: doc.name,
+        type: doc.type,
+        size: doc.size,
+        category: documentCategories.find(c => c.id === doc.category) || documentCategories.find(c => c.id === 'miscellaneous')!,
+        uploadDate: new Date(doc.uploadDate),
+        lastModified: new Date(doc.uploadDate),
+        tags: doc.tags || [],
         metadata: {
-          confidence: Math.random() * 0.3 + 0.7, // 70-100% confidence
+          confidence: doc.confidence || 0.5,
           language: 'en'
         },
-        file
-      };
+        file: null as any // File object not available from API
+      }));
       
-      newDocuments.push(document);
+      setDocuments(convertedDocuments);
+    } catch (error) {
+      console.error('Failed to load documents:', error);
+      setError('Failed to load documents');
     }
-    
-    setDocuments(prev => [...prev, ...newDocuments]);
-    setIsProcessing(false);
-    
-    return newDocuments;
   }, []);
+
+  const uploadDocuments = useCallback(async (files: FileList) => {
+    if (!isAuthenticated) {
+      setError('Please log in to upload documents');
+      return [];
+    }
+
+    setIsProcessing(true);
+    setError(null);
+    
+    try {
+      const response = await documentService.uploadDocuments(files);
+      
+      // Convert uploaded documents to frontend format
+      const newDocuments = response.documents.map(doc => ({
+        id: doc.id,
+        name: doc.name,
+        type: doc.type,
+        size: doc.size,
+        category: documentCategories.find(c => c.id === doc.category) || documentCategories.find(c => c.id === 'miscellaneous')!,
+        uploadDate: new Date(doc.uploadDate),
+        lastModified: new Date(doc.uploadDate),
+        tags: doc.tags || [],
+        metadata: {
+          confidence: doc.confidence || 0.5,
+          language: 'en'
+        },
+        file: Array.from(files).find(f => f.name === doc.name) || null as any
+      }));
+      
+      setDocuments(prev => [...prev, ...newDocuments]);
+      return newDocuments;
+    } catch (error) {
+      console.error('Upload failed:', error);
+      setError('Failed to upload documents');
+      return [];
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [isAuthenticated]);
 
   const searchDocuments = useCallback((query: string, filters?: SearchFilters) => {
     return documents.filter(doc => {
@@ -99,29 +102,55 @@ export const useDocuments = () => {
     });
   }, [documents]);
 
-  const updateDocumentCategory = useCallback((documentId: string, newCategory: DocumentCategory) => {
-    setDocuments(prev => prev.map(doc => 
-      doc.id === documentId ? { ...doc, category: newCategory } : doc
-    ));
+  const updateDocumentCategory = useCallback(async (documentId: string, newCategory: DocumentCategory) => {
+    try {
+      setError(null);
+      await documentService.updateDocumentCategory(documentId, newCategory.id);
+      
+      setDocuments(prev => prev.map(doc => 
+        doc.id === documentId ? { ...doc, category: newCategory } : doc
+      ));
+    } catch (error) {
+      console.error('Failed to update category:', error);
+      setError('Failed to update document category');
+    }
   }, []);
 
-  const addTagToDocument = useCallback((documentId: string, tag: string) => {
-    setDocuments(prev => prev.map(doc => 
-      doc.id === documentId ? { ...doc, tags: [...doc.tags, tag] } : doc
-    ));
+  const addTagToDocument = useCallback(async (documentId: string, tag: string) => {
+    try {
+      setError(null);
+      await documentService.addTagsToDocument(documentId, [tag]);
+      
+      setDocuments(prev => prev.map(doc => 
+        doc.id === documentId ? { ...doc, tags: [...doc.tags, tag] } : doc
+      ));
+    } catch (error) {
+      console.error('Failed to add tag:', error);
+      setError('Failed to add tag to document');
+    }
   }, []);
 
-  const deleteDocument = useCallback((documentId: string) => {
-    setDocuments(prev => prev.filter(doc => doc.id !== documentId));
+  const deleteDocument = useCallback(async (documentId: string) => {
+    try {
+      setError(null);
+      await documentService.deleteDocument(documentId);
+      
+      setDocuments(prev => prev.filter(doc => doc.id !== documentId));
+    } catch (error) {
+      console.error('Failed to delete document:', error);
+      setError('Failed to delete document');
+    }
   }, []);
 
   return {
     documents,
     isProcessing,
+    error,
     uploadDocuments,
     searchDocuments,
     updateDocumentCategory,
     addTagToDocument,
-    deleteDocument
+    deleteDocument,
+    loadDocuments
   };
 };
